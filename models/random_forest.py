@@ -1,46 +1,46 @@
-import pandas as pd
+import joblib
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import cross_val_score
+from utils import prepare_data
+import mlflow
+import mlflow.sklearn
 
-def load_data(file_path):
-    return pd.read_csv(file_path)
+# Enable MLflow logging
+mlflow.start_run()
 
-def train_random_forest(X, y):
-    # Split the data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+def train_random_forest(X_train, y_train, X_test, y_test):
+    forest = RandomForestClassifier(random_state=42)
+    forest.fit(X_train, y_train)
 
-    # Standardize the data
-    scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    # Cross-validation
+    cv_scores = cross_val_score(forest, X_train, y_train, cv=3, scoring='roc_auc')
+    print(f'Cross-validation ROC AUC scores: {cv_scores}')
+    print(f'Mean cross-validation ROC AUC score: {cv_scores.mean()}')
 
-    # Create random forest model
-    rf = RandomForestClassifier()
+    # Test evaluation
+    y_pred = forest.predict(X_test)
+    roc_auc = roc_auc_score(y_test, y_pred)
+    print(f'Test ROC AUC score: {roc_auc}')
 
-    # Hyperparameter tuning
-    param_grid = {'n_estimators': [100, 200, 500], 'max_depth': [5, 10, 20, None], 'min_samples_split': [2, 5, 10]}
-    grid_search = GridSearchCV(rf, param_grid, cv=5, scoring='roc_auc')
-    grid_search.fit(X_train, y_train)
+    # Log metrics to MLflow
+    mlflow.log_metric("cv_mean_roc_auc", cv_scores.mean())
+    mlflow.log_metric("test_roc_auc", roc_auc)
 
-    best_model = grid_search.best_estimator_
-
-    # Predict and evaluate
-    y_pred = best_model.predict(X_test)
-    y_pred_proba = best_model.predict_proba(X_test)[:, 1]
-
-    print("Best Parameters:", grid_search.best_params_)
-    print("Classification Report:\n", classification_report(y_test, y_pred))
-    print("ROC-AUC Score:", roc_auc_score(y_test, y_pred_proba))
+    # Save the model
+    model_path = "models/random_forest.pkl"
+    joblib.dump(forest, model_path)
+    mlflow.sklearn.log_model(forest, "model")
+    print(f'Model saved as {model_path}')
 
 if __name__ == "__main__":
-    df_fraud = load_data('data/processed_data/processed_fraud_with_features.csv')
-    X_fraud = df_fraud.drop(columns=['class'])
-    y_fraud = df_fraud['class']
-    train_random_forest(X_fraud, y_fraud)
-
-    df_credit = load_data('data/processed_data/processed_creditcard.csv')
-    X_credit = df_credit.drop(columns=['Class'])
-    y_credit = df_credit['Class']
-    train_random_forest(X_credit, y_credit)
+    # Preprocess and prepare data
+    ecommerce_file = 'data/processed_data/processed_fraud_with_features.csv'
+    creditcard_file = 'data/processed_data/processed_creditcard.csv'
+    X_train, X_test, y_train, y_test = prepare_data(ecommerce_file, 'class')
+    train_random_forest(X_train, y_train, X_test, y_test)
+    
+    X_train, X_test, y_train, y_test = prepare_data(creditcard_file, 'Class')
+    train_random_forest(X_train, y_train, X_test, y_test)
+    
+mlflow.end_run()
